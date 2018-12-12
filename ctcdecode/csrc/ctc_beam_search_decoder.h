@@ -62,4 +62,4 @@ ctc_beam_search_decoder_batch(
     size_t blank_id = 0,
     Scorer *ext_scorer = nullptr);
 
-#endif  // CTC_BEAM_SEARCH_DECODER_H_
+#endif // CTC_BEAM_SEARCH_DECODER_H_
