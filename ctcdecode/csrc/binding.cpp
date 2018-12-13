@@ -20,90 +20,88 @@ int utf8_to_utf8_char_vec(const char *labels, std::vector<std::string> &new_voca
     } while (str_i < end);
 }
 
-int beam_decoder(torch::Tensor probs,
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> beam_decoder(torch::Tensor probs,
                  torch::Tensor seq_lengths,
                  const char *labels,
                  int vocab_size,
-                 size_t beam_size,
-                 size_t num_processes,
+                 int beam_size,
+                 int num_processes,
                  double cutoff_prob,
-                 size_t cutoff_top_n,
-                 size_t blank_id,
-                 void *scorer,
-                 torch::Tensor output,
-                 torch::Tensor timesteps,
-                 torch::Tensor scores,
-                 torch::Tensor output_length)
+                 int cutoff_top_n,
+                 int blank_id,
+                 void *scorer)
 {
+  try {
 
-    AT_CHECK(!probs.type().is_cuda(), 'probs must be on CPU');
+        AT_CHECK(!probs.type().is_cuda(), 'probs must be on CPU');
+        AT_CHECK(!seq_lengths.type().is_cuda(), 'seq_lengths must be on CPU');
 
-    std::vector<std::string> new_vocab;
-    utf8_to_utf8_char_vec(labels, new_vocab);
-    std::cout << '1' << std::endl;
-    Scorer *ext_scorer = NULL;
-    if (scorer != NULL)
-    {
-        std::cout << 'null' << std::endl;
-        ext_scorer = static_cast<Scorer *>(scorer);
-    }
-    std::cout << '2' << std::endl;
+        auto batch_size = probs.size(0);
+        auto max_time = probs.size(1);
+        auto num_classes = probs.size(2);
 
-    auto probs_a = probs.accessor<float, 3>();
-    auto seq_lengths_a = seq_lengths.accessor<int32_t, 1>();
-    std::cout << '3' << std::endl;
+        torch::Tensor output = torch::empty({batch_size, beam_size, max_time}, torch::dtype(torch::kInt32).device(torch::kCPU));
+        torch::Tensor timesteps = torch::empty({batch_size, beam_size, max_time}, torch::dtype(torch::kInt32).device(torch::kCPU));
+        torch::Tensor scores = torch::empty({batch_size, beam_size}, torch::dtype(torch::kFloat32).device(torch::kCPU));
+        torch::Tensor output_length = torch::empty({batch_size, beam_size}, torch::dtype(torch::kInt32).device(torch::kCPU));
 
-    const int64_t batch_size = probs.size(0);
-    const int64_t max_time = probs.size(1);
-    const int64_t num_classes = probs.size(2);
+        std::vector<std::string> new_vocab;
+        utf8_to_utf8_char_vec(labels, new_vocab);
 
-    std::vector<std::vector<std::vector<double>>> inputs;
-    for (int b = 0; b < batch_size; ++b)
-    {
-        auto seq_len = std::min(seq_lengths_a[b], (int)max_time);
-        std::vector<std::vector<double>> temp(seq_len, std::vector<double>(num_classes));
-        for (int t = 0; t < seq_len; ++t)
+        Scorer *ext_scorer = (Scorer *) nullptr;
+        if (scorer)
+            ext_scorer = static_cast<Scorer *>(scorer);
+
+        auto probs_a = probs.accessor<float, 3>();
+        auto seq_lengths_a = seq_lengths.accessor<int32_t, 1>();
+
+        std::vector<std::vector<std::vector<double>>> inputs;
+        for (int b = 0; b < batch_size; ++b)
         {
-            for (int n = 0; n < num_classes; ++n)
+            auto seq_len = std::min(seq_lengths_a[b], (int)max_time);
+            std::vector<std::vector<double>> temp(seq_len, std::vector<double>(num_classes));
+            for (int t = 0; t < seq_len; ++t)
             {
-                temp[t][n] = probs_a[b][t][n];
+                for (int n = 0; n < num_classes; ++n)
+                {
+                    temp[t][n] = probs_a[b][t][n];
+                }
+            }
+            inputs.push_back(temp);
+        }
+
+        std::vector<std::vector<std::pair<double, Output>>> batch_results =
+            ctc_beam_search_decoder_batch(inputs, new_vocab, beam_size, num_processes, cutoff_prob, cutoff_top_n, blank_id, ext_scorer);
+
+        auto output_a = output.accessor<int32_t, 3>();
+        auto timesteps_a = timesteps.accessor<int32_t, 3>();
+
+        auto output_length_a = output_length.accessor<int32_t, 2>();
+        auto scores_a = scores.accessor<float, 2>();
+
+        for (int b = 0; b < batch_results.size(); ++b)
+        {
+            std::vector<std::pair<double, Output>> results = batch_results[b];
+            for (int p = 0; p < results.size(); ++p)
+            {
+                std::pair<double, Output> n_path_result = results[p];
+                Output out = n_path_result.second;
+                std::vector<int> output_tokens = out.tokens;
+                std::vector<int> output_timesteps = out.timesteps;
+                for (int t = 0; t < output_tokens.size(); ++t)
+                {
+                    output_a[b][p][t] = output_tokens[t];
+                    timesteps_a[b][p][t] = output_timesteps[t];
+                }
+                scores_a[b][p] = n_path_result.first;
+                output_length_a[b][p] = output_tokens.size();
             }
         }
-        inputs.push_back(temp);
-    }
-    std::cout << '4' << std::endl;
+        return std::make_tuple(output, scores, timesteps, output_length);
 
-    std::vector<std::vector<std::pair<double, Output>>> batch_results =
-        ctc_beam_search_decoder_batch(inputs, new_vocab, beam_size, num_processes, cutoff_prob, cutoff_top_n, blank_id, ext_scorer);
-
-    std::cout << '5' << std::endl;
-
-    auto output_a = output.accessor<float, 3>();
-    auto timesteps_a = timesteps.accessor<int32_t, 3>();
-
-    auto output_length_a = output_length.accessor<int32_t, 2>();
-    auto scores_a = scores.accessor<float, 2>();
-    std::cout << '6' << std::endl;
-
-    for (int b = 0; b < batch_results.size(); ++b)
-    {
-        std::vector<std::pair<double, Output>> results = batch_results[b];
-        for (int p = 0; p < results.size(); ++p)
-        {
-            std::pair<double, Output> n_path_result = results[p];
-            Output out = n_path_result.second;
-            std::vector<int> output_tokens = out.tokens;
-            std::vector<int> output_timesteps = out.timesteps;
-            for (int t = 0; t < output_tokens.size(); ++t)
-            {
-                output_a[b][p][t] = output_tokens[t];
-                timesteps_a[b][p][t] = output_timesteps[t];
-            }
-            scores_a[b][p] = n_path_result.first;
-            output_length_a[b][p] = output_tokens.size();
-        }
-    }
-    return 1;
+  } catch (const torch::Error &e) {
+    throw (torch::ValueError(e.what_without_backtrace()));
+  }
 }
 
 void *get_scorer(double alpha,

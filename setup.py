@@ -2,6 +2,7 @@
 import glob
 import multiprocessing.pool
 import os
+import platform
 import tarfile
 import warnings
 
@@ -9,7 +10,11 @@ import wget
 from setuptools import distutils, find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
-this_file = os.path.dirname(__file__)
+base_dir = os.path.dirname(os.path.dirname(__file__))
+
+IS_WINDOWS = (platform.system() == 'Windows')
+IS_DARWIN = (platform.system() == 'Darwin')
+IS_LINUX = (platform.system() == 'Linux')
 
 
 def download_extract(url, dl_path):
@@ -25,10 +30,10 @@ def download_extract(url, dl_path):
 
 
 # Download/Extract openfst, boost
-download_extract('https://sites.google.com/site/openfst/home/openfst-down/openfst-1.6.7.tar.gz',
-                 'third_party/openfst-1.6.7.tar.gz')
-download_extract('https://dl.bintray.com/boostorg/release/1.67.0/source/boost_1_67_0.tar.gz',
-                 'third_party/boost_1_67_0.tar.gz')
+download_extract('http://www.openfst.org/twiki/pub/FST/FstDownload/openfst-1.6.9.tar.gz',
+                 'third_party/openfst-1.6.9.tar.gz')
+download_extract('https://dl.bintray.com/boostorg/release/1.69.0/source/boost_1_69_0.tar.gz',
+                 'third_party/boost_1_69_0.tar.gz')
 
 for file in ['third_party/kenlm/setup.py', 'third_party/ThreadPool/ThreadPool.h']:
     if not os.path.exists(file):
@@ -45,8 +50,15 @@ def compile_test(header, library):
     return os.system(command) == 0
 
 
-compile_args = ['-O3', '-DNDEBUG', '-DKENLM_MAX_ORDER=6', '-std=c++11', '-fPIC', '-std=c99', '-w']
-ext_libs = ['stdc++']
+compile_args = ['-O3', '-DNDEBUG', '-DKENLM_MAX_ORDER=6', '-std=c++11', '-fPIC', '-w']
+
+if IS_LINUX:
+    ext_libs = ['stdc++', 'rt']
+elif IS_DARWIN:
+    ext_libs = ['c++']
+    compile_args.append("-stdlib=libc++")
+else:
+    ext_libs = []
 
 if compile_test('zlib.h', 'z'):
     compile_args.append('-DHAVE_ZLIB')

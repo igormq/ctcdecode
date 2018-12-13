@@ -9,20 +9,16 @@
 #include "utf8.h"
 #include "ctc_beam_search_decoder.h"
 
-int beam_decoder(torch::Tensor probs,
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor> beam_decoder(torch::Tensor probs,
                  torch::Tensor seq_lengths,
                  const char *labels,
                  int vocab_size,
-                 size_t beam_size,
-                 size_t num_processes,
+                 int beam_size,
+                 int num_processes,
                  double cutoff_prob,
-                 size_t cutoff_top_n,
-                 size_t blank_id,
-                 void *scorer,
-                 torch::Tensor output,
-                 torch::Tensor timesteps,
-                 torch::Tensor scores,
-                 torch::Tensor output_length);
+                 int cutoff_top_n,
+                 int blank_id,
+                 void *scorer=nullptr);
 
 void *get_scorer(double alpha,
                  double beta,
