@@ -137,3 +137,5 @@ ENV/
 *.app
 
 ctcdecode/ctcdecode.xcodeproj/
+third_party/openfst*
+third_party/boost*
